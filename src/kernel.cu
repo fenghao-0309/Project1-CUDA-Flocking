@@ -38,7 +38,7 @@ void checkCUDAError(const char *msg, int line = -1) {
 *****************/
 
 /*! Block size used for CUDA kernel launch. */
-#define blockSize 64
+#define blockSize 128
 
 // LOOK-1.2 Parameters for the boids algorithm.
 // These worked well in our reference implementation.
@@ -154,8 +154,7 @@ void Boids::initSimulation(int N) {
   checkCUDAErrorWithLine("cudaMalloc dev_vel2 failed!");
 
   // LOOK-1.2 - This is a typical CUDA kernel invocation.
-  kernGenerateRandomPosArray<<<fullBlocksPerGrid, blockSize>>>(1, numObjects,
-    dev_pos, scene_scale);
+  kernGenerateRandomPosArray<<<fullBlocksPerGrid, blockSize>>>(1, numObjects, dev_pos, scene_scale);
   checkCUDAErrorWithLine("kernGenerateRandomPosArray failed!");
 
   // LOOK-2.1 computing grid params
@@ -605,7 +604,7 @@ void Boids::stepSimulationNaive(float dt) {
     kernUpdateVelocityBruteForce << <fullBlocksPerGrid, blockSize >> > (numObjects, dev_pos, dev_vel1, dev_vel2);
     checkCUDAErrorWithLine("naive simulation failed!");
     cudaMemcpy(dev_vel1, dev_vel2, sizeof(glm::vec3) * numObjects, cudaMemcpyDeviceToDevice);
-    kernUpdatePos << <fullBlocksPerGrid, blockSize >> > (numObjects, dt, dev_pos, dev_vel1);
+    kernUpdatePos <<<fullBlocksPerGrid, blockSize >>> (numObjects, dt, dev_pos, dev_vel1);
     checkCUDAErrorWithLine("kernUpdatePos failed!");
 }
 
@@ -624,15 +623,15 @@ void Boids::stepSimulationScatteredGrid(float dt) {
   // - Ping-pong buffers as needed
     dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
     dim3 cell_block_num((gridCellCount + blockSize - 1) / blockSize);
-    kernResetIntBuffer << <cell_block_num, blockSize >> > (gridCellCount, dev_gridCellStartIndices, -1);
+    kernResetIntBuffer <<<cell_block_num, blockSize >>> (gridCellCount, dev_gridCellStartIndices, -1);
     checkCUDAErrorWithLine("kernResetIntBuffer failed!");
-    kernResetIntBuffer << <cell_block_num, blockSize >> > (gridCellCount, dev_gridCellEndIndices, -1);
+    kernResetIntBuffer <<<cell_block_num, blockSize >>> (gridCellCount, dev_gridCellEndIndices, -1);
     checkCUDAErrorWithLine("kernResetIntBuffer failed!");
     // Uniform Grid Neighbor search using Thrust sort.
     // In Parallel:
     // - label each particle with its array index as well as its grid index.
     //   Use 2x width grids.
-    kernComputeIndices << <fullBlocksPerGrid, blockSize >> > (numObjects, gridSideCount, gridMinimum, gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
+    kernComputeIndices <<<fullBlocksPerGrid, blockSize >>> (numObjects, gridSideCount, gridMinimum, gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
     checkCUDAErrorWithLine("kernComputeIndices failed!");
 
     // - Unstable key sort using Thrust. A stable sort isn't necessary, but you
@@ -643,7 +642,7 @@ void Boids::stepSimulationScatteredGrid(float dt) {
 
     // - Naively unroll the loop for finding the start and end indices of each
     //   cell's data pointers in the array of boid indices
-    kernIdentifyCellStartEnd << <fullBlocksPerGrid, blockSize >> > (numObjects, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
+    kernIdentifyCellStartEnd <<<fullBlocksPerGrid, blockSize >>> (numObjects, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
     checkCUDAErrorWithLine("kernIdentifyCellStartEnd failed!");
 
     // - Perform velocity updates using neighbor search
@@ -652,7 +651,7 @@ void Boids::stepSimulationScatteredGrid(float dt) {
     checkCUDAErrorWithLine("kernUpdateVelNeighborSearchScattered failed!");
 
     // - Update positions
-    kernUpdatePos << <fullBlocksPerGrid, blockSize >> > (numObjects, dt, dev_pos, dev_vel2);
+    kernUpdatePos <<<fullBlocksPerGrid, blockSize >>> (numObjects, dt, dev_pos, dev_vel2);
     checkCUDAErrorWithLine("kernUpdatePos failed!");
 
     // - Ping-pong buffers as needed
@@ -688,16 +687,16 @@ void Boids::stepSimulationCoherentGrid(float dt) {
   // - Ping-pong buffers as needed. THIS MAY BE DIFFERENT FROM BEFORE.
     dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
     dim3 cell_block_num((gridCellCount + blockSize - 1) / blockSize);
-    kernResetIntBuffer << <cell_block_num, blockSize >> > (gridCellCount, dev_gridCellStartIndices, -1);
+    kernResetIntBuffer <<<cell_block_num, blockSize >>> (gridCellCount, dev_gridCellStartIndices, -1);
     checkCUDAErrorWithLine("kernResetIntBuffer failed!");
-    kernResetIntBuffer << <cell_block_num, blockSize >> > (gridCellCount, dev_gridCellEndIndices, -1);
+    kernResetIntBuffer <<<cell_block_num, blockSize >>> (gridCellCount, dev_gridCellEndIndices, -1);
     checkCUDAErrorWithLine("kernResetIntBuffer failed!");
 
     // Uniform Grid Neighbor search using Thrust sort on cell-coherent data.
     // In Parallel:
     // - Label each particle with its array index as well as its grid index.
     //   Use 2x width grids
-    kernComputeIndices << <fullBlocksPerGrid, blockSize >> > (numObjects, gridSideCount, gridMinimum, gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
+    kernComputeIndices <<<fullBlocksPerGrid, blockSize >>> (numObjects, gridSideCount, gridMinimum, gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
     checkCUDAErrorWithLine("kernComputeIndices failed!");
 
     // - Unstable key sort using Thrust. A stable sort isn't necessary, but you
@@ -708,14 +707,14 @@ void Boids::stepSimulationCoherentGrid(float dt) {
 
     // - Naively unroll the loop for finding the start and end indices of each
     //   cell's data pointers in the array of boid indices
-    kernIdentifyCellStartEnd << < fullBlocksPerGrid, blockSize >> > (numObjects, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
+    kernIdentifyCellStartEnd <<< fullBlocksPerGrid, blockSize >>> (numObjects, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
     checkCUDAErrorWithLine("kernIdentifyCellStartEnd failed!");
 
     // - BIG DIFFERENCE: use the rearranged array index buffer to reshuffle all
     //   the particle data in the simulation array.
     //   CONSIDER WHAT ADDITIONAL BUFFERS YOU NEED
     // - Perform velocity updates using neighbor search
-    kernMakeCopyOfPosAndVel << <fullBlocksPerGrid, blockSize >> > (numObjects, dev_particleArrayIndices, dev_pos, dev_vel1, dev_posHolder, dev_vel1Holder);
+    kernMakeCopyOfPosAndVel <<<fullBlocksPerGrid, blockSize >>> (numObjects, dev_particleArrayIndices, dev_pos, dev_vel1, dev_posHolder, dev_vel1Holder);
     cudaMemcpy(dev_pos, dev_posHolder, numObjects * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
     cudaMemcpy(dev_vel1, dev_vel1Holder, numObjects * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
     kernUpdateVelNeighborSearchCoherent << <fullBlocksPerGrid, blockSize >> > (numObjects, gridSideCount, gridMinimum, gridInverseCellWidth, gridCellWidth,
@@ -723,7 +722,7 @@ void Boids::stepSimulationCoherentGrid(float dt) {
         dev_pos, dev_vel1, dev_vel2);
 
     // - Update positions
-    kernUpdatePos << < fullBlocksPerGrid, blockSize >> > (numObjects, dt, dev_pos, dev_vel2);
+    kernUpdatePos <<< fullBlocksPerGrid, blockSize >>> (numObjects, dt, dev_pos, dev_vel2);
     checkCUDAErrorWithLine("kernUpdatePos failed!");
 
     // - Ping-pong buffers as needed. THIS MAY BE DIFFERENT FROM BEFORE.
